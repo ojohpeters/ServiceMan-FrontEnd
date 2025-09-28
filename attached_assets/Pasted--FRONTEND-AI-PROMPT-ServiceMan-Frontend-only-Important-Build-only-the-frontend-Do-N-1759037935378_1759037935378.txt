@@ -1,0 +1,486 @@
+# FRONTEND AI PROMPT — ServiceMan (Frontend only)
+**Important:** Build **only** the frontend. **Do NOT** scaffold any `server/`, Express, or backend code. All API calls must talk directly to the existing Django DRF backend via environment variable `VITE_API_URL`. Produce a professional, polished UI/UX and implement the exact flows described below.
+
+---
+
+## 0) One-line summary for the AI
+Build a **professional, responsive React + Vite + TypeScript + Tailwind** frontend for *ServiceMan* that integrates with a Django REST API (`VITE_API_URL`) and implements full workflows for **Client**, **Serviceman**, and **Admin** (see detailed flow below). Include polished UI/UX (fixed navbar + footer), framer-motion animations, React Query, and a DEV mode with mock Paystack endpoints. **No backend code.**
+
+---
+
+## 1) Environment & Configuration
+- Expect environment variables (in `.env` at project root of client):
+VITE_API_URL=http://127.0.0.1:8000/api/v1
+VITE_DEV_MODE=true # "true" for dev mock behaviors; "false" for prod
+
+csharp
+Copy code
+- The frontend must use `import.meta.env.VITE_API_URL` as the base. **Do not hardcode** backend host in code.
+- Use `credentials: "include"` in fetch so cookie-based auth works if backend uses httpOnly cookies. Also support token auth.
+
+**Vite proxy (optional for local testing)**: you may also add a proxy in `vite.config.ts`, but the front-end must not rely on it — primary is `VITE_API_URL`.
+
+---
+
+## 2) Base fetch wrapper (`src/lib/apiRequest.ts`)
+Include this exact file in the repo and use it everywhere:
+
+```ts
+// src/lib/apiRequest.ts
+const BASE = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api/v1";
+
+async function throwIfNotOk(res: Response) {
+if (!res.ok) {
+  const text = await res.text().catch(() => res.statusText);
+  throw new Error(`${res.status}: ${text || res.statusText}`);
+}
+}
+
+export async function apiRequest(method: string, endpoint: string, data?: any, opts: RequestInit = {}): Promise<Response> {
+const url = `${BASE}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+const headers: HeadersInit = { ...(data ? { "Content-Type": "application/json" } : {}) };
+const res = await fetch(url, {
+  method,
+  headers,
+  body: data ? JSON.stringify(data) : undefined,
+  credentials: "include",
+  ...opts,
+});
+await throwIfNotOk(res);
+return res;
+}
+3) Example src/services/api.ts
+Use this as the single place for API calls (the frontend should import from here):
+
+ts
+Copy code
+// src/services/api.ts (example)
+import { apiRequest } from '@/lib/apiRequest';
+
+export const api = {
+  // Auth
+  register: (data) => apiRequest('POST', '/auth/register/', data).then(r => r.json()),
+  login: (data) => apiRequest('POST', '/auth/login/', data).then(r => r.json()),
+  refresh: () => apiRequest('POST', '/auth/refresh/').then(r => r.json()),
+
+  // Categories
+  getCategories: () => apiRequest('GET', '/categories/').then(r => r.json()),
+
+  // Browse / Servicemen
+  getServicemen: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return apiRequest('GET', `/servicemen/${qs ? `?${qs}` : ''}`).then(r => r.json());
+  },
+  getServicemanProfile: (id) => apiRequest('GET', `/servicemen/${id}/profile/`).then(r => r.json()),
+
+  // Client requests & payments
+  createRequest: (data) => apiRequest('POST', '/clients/request/', data).then(r => r.json()),
+  mockConsultationPay: (id, body) => apiRequest('POST', `/mock-pay/consultation/${id}/`, body).then(r => r.json()),
+  mockFinalPay: (id, body) => apiRequest('POST', `/mock-pay/final/${id}/`, body).then(r => r.json()),
+  getClientRequests: () => apiRequest('GET', '/clients/requests/').then(r => r.json()),
+  rateRequest: (id, body) => apiRequest('POST', `/clients/requests/${id}/rate/`, body).then(r => r.json()),
+
+  // Serviceman
+  getServicemanJobs: () => apiRequest('GET', '/servicemen/jobs/').then(r => r.json()),
+  reportCost: (id, body) => apiRequest('POST', `/servicemen/requests/${id}/report-cost/`, body).then(r => r.json()),
+  startJob: (id) => apiRequest('POST', `/servicemen/requests/${id}/start/`).then(r => r.json()),
+  completeJob: (id) => apiRequest('POST', `/servicemen/requests/${id}/complete/`).then(r => r.json()),
+  getServicemanRatings: () => apiRequest('GET', '/servicemen/ratings/').then(r => r.json()),
+
+  // Admin
+  getApplications: () => apiRequest('GET', '/admin/applications/').then(r => r.json()),
+  approveApplication: (id) => apiRequest('POST', `/admin/applications/${id}/approve/`).then(r => r.json()),
+  rejectApplication: (id) => apiRequest('POST', `/admin/applications/${id}/reject/`).then(r => r.json()),
+  getAllRequests: () => apiRequest('GET', '/admin/requests/').then(r => r.json()),
+  notifyServiceman: (id) => apiRequest('POST', `/admin/requests/${id}/notify-serviceman/`).then(r => r.json()),
+  setServiceCost: (id, body) => apiRequest('POST', `/admin/requests/${id}/set-cost/`, body).then(r => r.json()),
+  getAnalytics: () => apiRequest('GET', '/admin/analytics/').then(r => r.json()),
+
+  // Notifications
+  getNotifications: () => apiRequest('GET', '/notifications/').then(r => r.json()),
+  markNotificationRead: (id) => apiRequest('POST', `/notifications/${id}/read/`).then(r => r.json()),
+};
+NOTE: VITE_API_URL should include the /api/v1 prefix — e.g. http://127.0.0.1:8000/api/v1. Then endpoints above should be used as shown (/auth/register/, /clients/request/, etc).
+
+4) Complete API Documentation (exact endpoints, methods, request/response)
+Base URL = import.meta.env.VITE_API_URL (e.g. http://127.0.0.1:8000/api/v1)
+
+Use trailing slashes exactly (many DRF setups expect them)
+
+Auth
+POST /auth/register/
+
+Client request body
+
+json
+Copy code
+{
+  "role": "client",
+  "full_name": "John Doe",
+  "email": "john@example.com",
+  "phone_number": "+2348012345678",
+  "contact_address": "123 Main St",
+  "password": "Secret123!"
+}
+Serviceman request body
+
+json
+Copy code
+{
+  "role": "serviceman",
+  "full_name": "Jane Smith",
+  "email": "jane@example.com",
+  "phone_number": "+2348098765432",
+  "contact_address": "Addr",
+  "password": "Secret123!",
+  "qualifications": "Certified Carpenter",
+  "years_of_experience": 5,
+  "categories": [1, 4]
+}
+Response: 201 user object (serviceman will often be is_active=false / unverified until admin approves)
+
+POST /auth/login/
+
+Body: { "username": "john", "password": "Secret123!" }
+
+Response: { "access": "...", "refresh": "..." } or cookie set (depending backend)
+
+POST /auth/refresh/
+
+Body: refresh token → Response: new access token
+
+Categories
+GET /categories/ → list of categories
+
+POST /categories/ (admin) → create
+
+PUT /categories/{id}/ (admin) → update
+
+DELETE /categories/{id}/ (admin) → delete
+
+Landing & Browse
+GET /landing/
+
+Response: { featured_categories: [...], top_servicemen: [...], hero: {...} } (optional; fallback to GET /servicemen/)
+
+GET /servicemen/?category={id}&min_rating={n}&search={q}&page={n}
+
+GET /servicemen/{id}/profile/
+
+Requests & Payments (core flow)
+POST /clients/request/ — create consultation request
+
+Body:
+
+json
+Copy code
+{
+  "serviceman_id": 12,
+  "category_id": 3,
+  "requested_date": "2025-10-15",
+  "is_emergency": true
+}
+Response (example):
+
+json
+Copy code
+{
+  "request_id": 101,
+  "consultation_fee": 5000,
+  "payment_required": true,
+  "payment_url": "https://pay.example/session/abc"  // or backend will provide mock endpoint
+}
+POST /mock-pay/consultation/{request_id}/ (DEV only)
+
+Body: { "simulate": "success" }
+
+Response: updated job object with consultation_paid: true and status: "awaiting_admin"
+
+GET /clients/requests/ — list client requests
+
+POST /clients/requests/{id}/rate/ — rating (after status == completed)
+
+Body: { "stars": 5, "feedback": "Great work!" }
+
+Serviceman
+GET /servicemen/profile/ — own profile
+
+PUT /servicemen/profile/ — update profile
+
+GET /servicemen/jobs/ — assigned jobs
+
+POST /servicemen/requests/{id}/report-cost/ — serviceman reports estimate:
+
+Body: { "serviceman_estimate": 50000 } → sets status serviceman_reported
+
+POST /servicemen/requests/{id}/start/ — set in_progress (only after final payment confirmed)
+
+POST /servicemen/requests/{id}/complete/ — set completed
+
+Admin
+GET /admin/applications/ — pending serviceman applications
+
+POST /admin/applications/{id}/approve/ — approve serviceman (sets is_verified/is_active)
+
+POST /admin/applications/{id}/reject/
+
+GET /admin/requests/ — all job requests (urgent flagged)
+
+POST /admin/requests/{id}/notify-serviceman/ — sends notification + e-mail backup to serviceman (include client contact & requested_date)
+
+POST /admin/requests/{id}/set-cost/
+
+Body: { "base_cost": 50000, "markup_percent": 10 }
+
+Response: { "final_bill": 55000, "payment_url": "/mock-pay/final/101/" }
+
+GET /admin/analytics/ — returns totals + average ratings per category
+
+Notifications
+GET /notifications/ — list for current user
+
+POST /notifications/{id}/read/ — mark as read
+
+5) Exact Business Flow (detailed step-by-step)
+Registration & approval
+Serviceman fills online form: name, age, qualifications, email, address, phone. Submit POST /auth/register/ with role: "serviceman". The account created but is_active=false (or is_verified=false) — cannot log in until approved.
+
+Admin views pending via GET /admin/applications/ and POST /admin/applications/{id}/approve/ → system sends email to serviceman: “Your application approved — attend physical verification” (email backup always logged to console in dev).
+
+Client requests consultation (consultation payment flow)
+Client browses servicemen and clicks Request Service.
+
+UI shows RequestServiceModal: date-picker (requested_date) + Emergency toggle. Consultation fee rule:
+
+is_emergency: true → consultation_fee = ₦5,000
+
+is_emergency: false → consultation_fee = ₦2,000
+
+On submit, frontend POST /clients/request/ with required fields.
+
+Backend returns { request_id, consultation_fee, payment_required, payment_url }
+
+Frontend opens Mock Pay (if DEV): POST /mock-pay/consultation/{request_id}/ with {simulate:'success'} — backend marks consultation_paid=true and status=awaiting_admin. Client sees confirmation.
+
+Admin notification → Serviceman steps
+Admin sees the request in dashboard (emergency flagged red).
+
+Admin clicks Notify Serviceman → POST /admin/requests/{id}/notify-serviceman/. Backend sets status=notified_serviceman, creates DB Notification for serviceman and sends email backup. The DB notification includes the client's phone_number & requested_date.
+
+Serviceman receives in-app notification and email backup, sees request in his dashboard and visits the site or goes physically to inspect job.
+
+Serviceman reports estimate
+After survey, Serviceman submits estimate via POST /servicemen/requests/{id}/report-cost/ body {serviceman_estimate}. Backend sets serviceman_estimate and status=serviceman_reported. Admin notified.
+
+Admin sets final bill
+Admin reviews estimate and sets markup: POST /admin/requests/{id}/set-cost/ with { base_cost, markup_percent }. Backend computes final_bill = base_cost * (1 + markup_percent/100), sets status=awaiting_client_payment, and returns { final_bill, payment_url }.
+
+Frontend sends that to client (notification & email). Client can either pay or negotiate (see next).
+
+Negotiation & final payment
+If client negotiates: UI must show contact methods (phone/WhatsApp) to contact admin; admin updates final_bill with a new POST /admin/requests/{id}/set-cost/.
+
+When client pays final bill: frontend calls POST /mock-pay/final/{request_id}/ (dev) or redirect to real payment gateway. On success, backend sets final_payment_paid=true, status=confirmed, notifies admin & serviceman.
+
+Work & completion
+Serviceman can now POST /servicemen/requests/{id}/start/ to mark in_progress.
+
+After finishing, Serviceman POST /servicemen/requests/{id}/complete/ → status=completed.
+
+System creates notifications (DB + email backup) for admin & client. Client can now POST /clients/requests/{id}/rate/ with {stars, feedback}. Backend updates serviceman average rating & completed_jobs_count.
+
+6) Frontend UI/UX Requirements (strict)
+Fixed Navbar at top (sticky, glass blur), includes:
+
+Logo (left)
+
+Category dropdown (fetch /categories/)
+
+Global search (servicemen)
+
+Primary CTA (Hire Now)
+
+User menu (avatar, dashboard links)
+
+DEV MODE toggle (visible only if VITE_DEV_MODE=true in env)
+
+Fixed Footer: links, contact, socials
+
+Landing page: hero, featured categories, top 4–5 servicemen by avg rating
+
+All pages fully responsive (mobile, tablet, desktop)
+
+Use Tailwind + framer-motion: subtle hover lifts, modal slides, page transitions
+
+Emergency items: red badge + subtle pulsing animation
+
+Use star rating UI for reviews (1–5) and show average on cards
+
+Provide dark & light theme toggle (optional but preferred)
+
+Accessibility: semantic tags, aria attributes, keyboard navigation
+
+Performance: lazy load images, minimal initial bundle
+
+7) Components to implement (must exist)
+FixedNavbar, FixedFooter
+
+CategoryDropdown, SearchBar
+
+ServicemanCard, ServicemanProfile
+
+RequestServiceModal (calendar + emergency toggle + show consultation fee)
+
+MockPaymentModal (dev)
+
+ClientDashboard, ServicemanDashboard, AdminDashboard
+
+NotificationsCenter (toasts + persistent list)
+
+RatingModal, SubmitEstimateForm, AdminSetCostModal
+
+AnalyticsCharts (admin)
+
+8) DEV MODE behavior (VITE_DEV_MODE = "true")
+Navbar shows "DEV MODE ACTIVE" badge and a toggle
+
+Autofill registration & request forms
+
+Payments bypass real gateways; frontend should call /mock-pay/* endpoints (see API) and treat them as success/failure
+
+Allow navigation to dashboards without strict login (simulate login for dev)
+
+Must be removable by setting VITE_DEV_MODE=false (document in README)
+
+9) Notifications & Email backup
+Every important event must create a DB Notification (GET /notifications/ returns them)
+
+Simultaneously, send email backup to user email (console backend in dev). Frontend must visually show notifications (toast + center), and a historic notifications page.
+
+Events that create notifications:
+
+Admin approves serviceman application
+
+Consultation payment confirmed
+
+Admin notifies serviceman (attach client phone number)
+
+Serviceman reports estimate
+
+Admin sets final bill (client notified)
+
+Final payment confirmed (admin notified)
+
+Serviceman marks job complete (client & admin notified)
+
+New rating received
+
+10) Testing: CURL sequences (full flow)
+assume BASE=http://127.0.0.1:8000/api/v1 and you have created admin via Django admin
+
+Register client
+
+bash
+Copy code
+curl -X POST $BASE/auth/register/ -H "Content-Type: application/json" \
+ -d '{"role":"client","full_name":"John Doe","email":"john@example.com","phone_number":"+2348012345678","contact_address":"Lagos","password":"Testpass123!"}'
+Register serviceman
+
+bash
+Copy code
+curl -X POST $BASE/auth/register/ -H "Content-Type: application/json" \
+ -d '{"role":"serviceman","full_name":"Ade Bello","email":"ade@example.com","phone_number":"+23480...","contact_address":"Lagos","password":"Testpass123!","qualifications":"Carpentry","years_of_experience":5,"categories":[1] }'
+Client create request
+
+bash
+Copy code
+# login and get token or cookies then:
+curl -X POST $BASE/clients/request/ -H "Content-Type: application/json" -b cookiejar -c cookiejar \
+ -d '{"serviceman_id":12,"category_id":1,"requested_date":"2025-10-20","is_emergency":true}'
+Mock consultation pay
+
+bash
+Copy code
+curl -X POST $BASE/mock-pay/consultation/101/ -H "Content-Type: application/json" -b cookiejar -c cookiejar \
+ -d '{"simulate":"success"}'
+Admin notify serviceman
+
+bash
+Copy code
+curl -X POST $BASE/admin/requests/101/notify-serviceman/ -H "Content-Type: application/json" -b admincookie
+Serviceman report cost
+
+bash
+Copy code
+curl -X POST $BASE/servicemen/requests/101/report-cost/ -H "Content-Type: application/json" -b servicemancookie \
+ -d '{"serviceman_estimate":50000}'
+Admin set cost
+
+bash
+Copy code
+curl -X POST $BASE/admin/requests/101/set-cost/ -H "Content-Type: application/json" -b admincookie \
+ -d '{"base_cost":50000,"markup_percent":10}'
+Mock final pay
+
+bash
+Copy code
+curl -X POST $BASE/mock-pay/final/101/ -H "Content-Type: application/json" -b cookiejar \
+ -d '{"simulate":"success"}'
+Serviceman start & complete
+
+bash
+Copy code
+curl -X POST $BASE/servicemen/requests/101/start/ -b servicemancookie
+curl -X POST $BASE/servicemen/requests/101/complete/ -b servicemancookie
+Client rate
+
+bash
+Copy code
+curl -X POST $BASE/clients/requests/101/rate/ -H "Content-Type: application/json" -b cookiejar \
+ -d '{"stars":5,"feedback":"Excellent!"}'
+11) Acceptance Criteria (what you MUST deliver)
+Frontend only (no server files). If the generator outputs server/ folder, remove it.
+
+client/src/lib/apiRequest.ts implemented exactly and used everywhere
+
+client/src/services/api.ts or similar mapping to endpoints (examples above)
+
+Fixed navbar + footer, polished landing, browse, profile, request modal, dashboards (client/serviceman/admin)
+
+Integration with mock-pay endpoints when VITE_DEV_MODE=true
+
+Notifications UI + email backup visual indicators
+
+Rating flow works only after status=completed
+
+Admin tools: approve serviceman, notify serviceman, set cost/markup, analytics
+
+All endpoints call BASE + endpoint using VITE_API_URL
+
+README with .env example and how to disable DEV_MODE
+
+12) README snippet to include (copy to repo)
+bash
+Copy code
+# ServiceMan Frontend
+
+## Setup
+1. Copy `.env.example` to `.env` and set:
+   VITE_API_URL=http://127.0.0.1:8000/api/v1
+   VITE_DEV_MODE=true
+
+2. Install & run:
+   npm install
+   npm run dev
+
+## Dev mode
+Set `VITE_DEV_MODE=false` to disable mock payments & dev toggles.
+
+## Backend integration
+The app expects a Django DRF backend at `VITE_API_URL` exposing the API described in this document.
+FINAL INSTRUCTION (very important to the AI)
+DO NOT generate any server/backend code. If templates or helper servers are offered, skip them.
+
+All network calls must use import.meta.env.VITE_API_URL + the endpoints defined above.
+
+Focus on polished UI/UX, UX flows exactly as described, good error handling, accessibility, animations using framer-motion, and final acceptance criteria above.
